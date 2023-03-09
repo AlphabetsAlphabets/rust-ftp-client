@@ -7,3 +7,8 @@ compile_commands.json
 
 # Executable
 cpp-ftp
+
+
+# Added by cargo
+
+/target
