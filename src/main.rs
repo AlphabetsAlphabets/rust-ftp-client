@@ -1,5 +1,5 @@
 use std::{
-    io::{ErrorKind, Read, Write},
+    io::{BufRead, BufReader, ErrorKind, Read, Write},
     net::TcpStream,
 };
 
@@ -11,61 +11,42 @@ use std::{
 /// Because each time you call read() you read some raw data from the
 /// network stream, but that doesn't guarantee to be the full message.
 /// Therefore, you have to find back the markers to detect when a message is considered complete.
-fn receive_response(stream: &mut TcpStream) -> Vec<u8> {
-    let mut buf = vec![0; 1024];
+fn receive_response(stream: &mut BufReader<TcpStream>) -> String {
+    let mut response = String::new();
+    // This will read until the end of the line. Need to keep reading until I reach Ok(0)
     loop {
-        let bytes = match stream.read(&mut buf) {
-            Ok(0) => b"SYSTEM: No more bytes left.",
-            Ok(bytes_read) => &buf[..bytes_read],
+        match stream.read_line(&mut response) {
+            // Reached EOF
+            Ok(0) => break,
+            // Return number of bytes read if there are no issues
+            Ok(_bytes_read) => {}
             Err(e) => {
                 if let ErrorKind::Interrupted = e.kind() {
-                    b"SYSTEM: There is nothing else to do. Killing reader."
+                    {};
                 } else {
                     eprintln!("Error: {}", e);
                     panic!("Encountered IOError.");
                 }
             }
         };
-
-        let mut iter = bytes.iter();
-        match iter.position(|&b| char::from(b) == '2') {
-            Some(index) => {
-                let next = iter.nth(index + 1);
-                let succeeding = iter.nth(index + 2);
-
-                if next.is_none() || succeeding.is_none() {
-                    return bytes.to_vec();
-                }
-
-                let next = char::from(next.unwrap().to_owned());
-                let succeeding = char::from(succeeding.unwrap().to_owned());
-
-                // Looks for 226 and 250. Both are responses to signify the transmission is
-                // complete
-                let end_of_conn_code = (next == '2' || next == '5') && (succeeding == '6' || succeeding == '0');
-                if end_of_conn_code {
-                    return bytes.to_vec();
-                }
-
-                continue;
-            }
-            None => bytes.to_vec(),
-        };
     }
+
+    response
 }
 
-fn send_msg(stream: &mut TcpStream, msg: &str) {
+fn send_msg(stream: &mut BufReader<TcpStream>, msg: &str) {
     let msg = format!("{}\r\n", msg);
-    stream.write_all(msg.as_bytes()).unwrap();
+    stream.get_mut().write(msg.as_bytes()).unwrap();
 }
 
 fn main() -> Result<(), std::io::Error> {
-    let mut stream = TcpStream::connect("ftp.gnu.org:21")?;
-    _ = receive_response(&mut stream);
+    let stream = TcpStream::connect("ftp.gnu.org:21")?;
+    let mut stream = BufReader::new(stream);
+    let response = receive_response(&mut stream);
+    println!("{}", response);
 
     send_msg(&mut stream, "USER anonymous");
     let response = receive_response(&mut stream);
-    let response = String::from_utf8(response).unwrap();
     println!("{}", response);
 
     send_msg(&mut stream, "QUIT");
