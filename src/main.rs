@@ -1,7 +1,7 @@
 #![feature(iter_collect_into)]
 
 use std::{
-    io::{self, Read, Write},
+    io::{Read, Write, ErrorKind},
     net::TcpStream,
 };
 
@@ -10,51 +10,38 @@ fn send_msg(stream: &mut TcpStream, msg: &str) {
     stream.write_all(msg.as_bytes()).unwrap();
 }
 
-// TODO: Handle errors
 fn receive_response(stream: &mut TcpStream) -> String {
-    let mut response = vec![];
-    let mut iter = stream.bytes();
-    while let Some(byte) = iter.next() {
-        if let Err(e) = byte {
-            // So far have not encountered this situation yet.
-            eprintln!("{}", e);
-            todo!("Find out more about the error.");
-        }
-
-        let char = char::from(byte.unwrap());
-
-        // Check for CR
-        if char == '\r' {
-            let next_byte = iter.next().unwrap();
-            if let Err(e) = next_byte {
-                // So far have not encountered this situation yet.
-                eprintln!("{}", e);
-                todo!("Find out more about the error.");
+    let mut buf = vec![0; 1024];
+    let bytes = match stream.read(&mut buf) {
+        Ok(0) => b"SYSTEM: No more bytes left.",
+        Ok(bytes_read) =>  {
+            if bytes_read > buf.len() {
+                let over_by = bytes_read - buf.len();
+                let surplus = vec![0; over_by];
+                buf.extend(surplus)
             }
 
-            let next_char = char::from(next_byte.unwrap());
-
-            // Check for LF
-            if next_char == '\n' {
-                // End of response
-                response.push(next_char);
-                break;
+            &buf[..bytes_read]
+        },
+        Err(e) => {
+            if let ErrorKind::Interrupted = e.kind() {
+                b"SYSTEM: There is nothing else to do. Killing reader."
+            } else {
+                eprintln!("Error: {}", e);
+                panic!("Encountered IOError.");
             }
-
-            // If just CR no LF. Continue.
-            response.push(next_char);
-        } else {
-            response.push(char);
         }
+    };
+
+    match std::str::from_utf8(bytes) {
+        Ok(s) => s.to_string(),
+        Err(_) => "Invalid UTF-8 character.".to_string(),
     }
-
-    response.iter().collect()
 }
 
 fn main() -> Result<(), std::io::Error> {
     let mut stream = TcpStream::connect("ftp.gnu.org:21")?;
 
-    println!("Logging in as anonymous.");
     send_msg(&mut stream, "USER anonymous");
     let response = receive_response(&mut stream);
     println!("{}", response);
@@ -62,6 +49,12 @@ fn main() -> Result<(), std::io::Error> {
     send_msg(&mut stream, "HELP");
     let response = receive_response(&mut stream);
     println!("{}", response);
+
+    send_msg(&mut stream, "CWD");
+    let response = receive_response(&mut stream);
+    println!("{}", response);
+
+    send_msg(&mut stream, "QUIT");
 
     Ok(())
 }
