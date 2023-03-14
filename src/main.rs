@@ -3,44 +3,55 @@ use std::{
     net::TcpStream,
 };
 
-fn receive_response(stream: &mut TcpStream) -> String {
+/// Dnaka:
+///
+/// The keyword here is framing, which basically means, you have some kind of
+/// indicator to know when one message is fully read. That can be some length
+/// prefix at the start of the message, some byte flag,... in your case the \r\n or \n delimiter.
+/// Because each time you call read() you read some raw data from the
+/// network stream, but that doesn't guarantee to be the full message.
+/// Therefore, you have to find back the markers to detect when a message is considered complete.
+fn receive_response(stream: &mut TcpStream) -> Vec<u8> {
     let mut buf = vec![0; 1024];
-    let bytes = match stream.read(&mut buf) {
-        Ok(0) => b"SYSTEM: No more bytes left.",
-        Ok(bytes_read) => &buf[..bytes_read],
-        Err(e) => {
-            if let ErrorKind::Interrupted = e.kind() {
-                b"SYSTEM: There is nothing else to do. Killing reader."
-            } else {
-                eprintln!("Error: {}", e);
-                panic!("Encountered IOError.");
+    loop {
+        let bytes = match stream.read(&mut buf) {
+            Ok(0) => b"SYSTEM: No more bytes left.",
+            Ok(bytes_read) => &buf[..bytes_read],
+            Err(e) => {
+                if let ErrorKind::Interrupted = e.kind() {
+                    b"SYSTEM: There is nothing else to do. Killing reader."
+                } else {
+                    eprintln!("Error: {}", e);
+                    panic!("Encountered IOError.");
+                }
             }
-        }
-    };
+        };
 
-    let mut msg = vec![];
-    let mut cr = false;
-    let mut lf = false;
-    for byte in bytes {
-        let c = char::from(*byte);
+        let mut iter = bytes.iter();
+        match iter.position(|&b| char::from(b) == '2') {
+            Some(index) => {
+                let next = iter.nth(index + 1);
+                let succeeding = iter.nth(index + 2);
 
-        if c == '\n' && cr {
-            lf = true;
-        } else if c == '\r' {
-            cr = true;
-        }
+                if next.is_none() || succeeding.is_none() {
+                    return bytes.to_vec();
+                }
 
-        msg.push(c);
+                let next = char::from(next.unwrap().to_owned());
+                let succeeding = char::from(succeeding.unwrap().to_owned());
 
-        // This cuts off prematurely. A new line is always \r\n. I need to find the actual \r\n,
-        // so check what the next thing item after \r\n is. Which means iterators.
-        if cr && lf {
-            break;
-        }
+                // Looks for 226 and 250. Both are responses to signify the transmission is
+                // complete
+                let end_of_conn_code = (next == '2' || next == '5') && (succeeding == '6' || succeeding == '0');
+                if end_of_conn_code {
+                    return bytes.to_vec();
+                }
+
+                continue;
+            }
+            None => bytes.to_vec(),
+        };
     }
-
-    let msg: String = msg.iter().collect();
-    msg
 }
 
 fn send_msg(stream: &mut TcpStream, msg: &str) {
@@ -54,15 +65,10 @@ fn main() -> Result<(), std::io::Error> {
 
     send_msg(&mut stream, "USER anonymous");
     let response = receive_response(&mut stream);
+    let response = String::from_utf8(response).unwrap();
     println!("{}", response);
 
-    send_msg(&mut stream, "HELP");
-    let response = receive_response(&mut stream);
-    println!("{}", response);
-
-    send_msg(&mut stream, "CWD");
-    let response = receive_response(&mut stream);
-    println!("{}", response);
+    send_msg(&mut stream, "QUIT");
 
     Ok(())
 }
