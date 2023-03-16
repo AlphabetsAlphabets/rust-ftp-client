@@ -3,9 +3,6 @@ use std::{
     net::TcpStream,
 };
 
-/// Dnaka:
-///
-/// The keyword here is framing, which basically means, you have some kind of indicator to know when one message is fully read. That can be some length prefix at the start of the message, some byte flag,... in your case the \r\n or \n delimiter. Because each time you call read() you read some raw data from the network stream, but that doesn't guarantee to be the full message. Therefore, you have to find back the markers to detect when a message is considered complete.
 fn receive_response(stream: &mut BufReader<TcpStream>) -> String {
     let mut response = String::new();
 
@@ -31,6 +28,20 @@ fn receive_response(stream: &mut BufReader<TcpStream>) -> String {
     let is_hypen = &response[3..4] == "-";
     if is_hypen {
         response.push_str(&receive_response(stream));
+    } 
+
+    let start_with_space = &response[0..1] == " ";
+    let index = response.len();
+    let end_with_crlf = &response[index - 2..index] == "\r\n";
+    
+    // NOTE: This is true for the "HELP" command as far as I'm aware.
+    // It's the only command that I know of that has a multi line response.
+    // Not sure if the other responses will have the same format, I assume
+    // it does.
+    //
+    // Will be true if output is a multi-line command
+    if start_with_space && end_with_crlf {
+        response.push_str(&receive_response(stream));
     }
 
     response
@@ -51,11 +62,11 @@ fn main() -> Result<(), std::io::Error> {
     let response = receive_response(&mut stream);
     println!("{}", response);
 
-    send_msg(&mut stream, "HELP");
+    send_msg(&mut stream, "PASV");
     let response = receive_response(&mut stream);
     println!("{}", response);
 
-    send_msg(&mut stream, "CWD");
+    send_msg(&mut stream, "LIST");
     let response = receive_response(&mut stream);
     println!("{}", response);
 
